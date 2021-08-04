@@ -5,11 +5,13 @@ import tksheet as table
 import copy
 import csv
 import os
+import time
+import random
 
 
 class CommWidget(tk.Frame):
 
-    def __init__(self, parent, row, column, main_text):
+    def __init__(self, parent, row, column, main_text, connected_callback=None, disconnected_callback=None):
         super().__init__(parent)
 
         # Positioning in parent
@@ -26,6 +28,9 @@ class CommWidget(tk.Frame):
 
         self.status_text = tk.StringVar()
         self.status_text.set("Not connected")
+
+        self.connected_callback = connected_callback
+        self.disconnected_callback = disconnected_callback
 
         # Widget member variables
         port_list = ports.comports()
@@ -72,11 +77,15 @@ class CommWidget(tk.Frame):
             if self.has_a_port_been_selected() is True:
                 self.is_connected = True
                 self.status_text.set('Connected')
+                if self.connected_callback:
+                    self.connected_callback()
             else:
                 self.status_text.set('Port not selected')
         elif self.is_connected is True:
             self.is_connected = False
             self.status_text.set('Not connected')
+            if self.disconnected_callback:
+                self.disconnected_callback()
 
 
 class PatternTableWidget(tk.Frame):
@@ -128,7 +137,7 @@ class PatternTableWidget(tk.Frame):
                         if (element == 'VELOCITY' and index == 1) or (element == 'TIME' and index == 0):
                             new_row.append(element)
                         else:
-                            raise Exception('Incorrect input')
+                            raise Exception(print('Input error in ' + self.main_label.cget("text")))
                 sanitized_data.append(new_row)
             return sanitized_data
         except Exception as error_message:
@@ -183,26 +192,41 @@ class ParameterTableWidget(tk.Frame):
         self.table.grid(row=1, column=0, columnspan=2, padx=5)
 
     def get_data(self):
-        raw_data = copy.deepcopy(self.table.get_sheet_data())
-        return raw_data
+        original_data = copy.deepcopy(self.table.get_sheet_data())
+        sanitized_data = []
+        try:
+            for row in original_data:
+                new_row = []
+                for index, element in enumerate(row):
+                    new_row.append(float(element))
+                sanitized_data.append(new_row)
+            return sanitized_data
+        except ValueError:
+            print('Input error in ' + self.main_label.cget("text"))
+            return None
 
     def set_data(self, data):
         self.table.set_sheet_data(copy.deepcopy(data))
 
+    def should_randomize_data(self):
+        return self.randomize_variable.get()
+
 
 class SaveAndLoadWidget(tk.Frame):
-    def __init__(self, parent, row, column):
+    def __init__(self, parent, row, column, pattern_table, velocity_table, position_table):
         super().__init__(parent)
 
         # Positioning in parent
-        self.parent = parent
         self.config(padx=5, pady=5)
         self.grid(row=row, column=column, columnspan=3, sticky='nsew')
-        self.parent.columnconfigure(column, weight=1)
+        parent.columnconfigure(column, weight=1)
 
         # Non widget member variables
         self.storage_folder_directory = tk.StringVar()
         self.storage_folder_directory.set(os.getcwd())
+        self.pattern_table = pattern_table
+        self.velocity_table = velocity_table
+        self.position_table = position_table
 
         # Widget member variables
         self.save_button = tk.Button(master=self,
@@ -236,28 +260,28 @@ class SaveAndLoadWidget(tk.Frame):
     def save_table_data(self):
         with open(self.storage_folder_directory.get() + '/pattern_file.csv', mode='w', newline='') as file:
             writer = csv.writer(file)
-            writer.writerows(self.parent.pattern_table.get_data())
+            writer.writerows(self.pattern_table.get_data())
 
         with open(self.storage_folder_directory.get() + '/velocity_file.csv', mode='w', newline='') as file:
             writer = csv.writer(file)
-            writer.writerows(self.parent.velocity_table.get_data())
+            writer.writerows(self.velocity_table.get_data())
 
         with open(self.storage_folder_directory.get() + '/position_file.csv', mode='w', newline='') as file:
             writer = csv.writer(file)
-            writer.writerows(self.parent.position_table.get_data())
+            writer.writerows(self.position_table.get_data())
 
     def load_table_data(self):
         with open(self.storage_folder_directory.get() + '/pattern_file.csv', mode='r') as file:
             reader = csv.reader(file)
-            self.parent.pattern_table.set_data(list(reader))
+            self.pattern_table.set_data(list(reader))
 
         with open(self.storage_folder_directory.get() + '/velocity_file.csv', mode='r') as file:
             reader = csv.reader(file)
-            self.parent.velocity_table.set_data(list(reader))
+            self.velocity_table.set_data(list(reader))
 
         with open(self.storage_folder_directory.get() + '/position_file.csv', mode='r') as file:
             reader = csv.reader(file)
-            self.parent.position_table.set_data(list(reader))
+            self.position_table.set_data(list(reader))
 
     def select_directory(self):
         directory = askdirectory(initialdir=self.storage_folder_directory.get())
@@ -265,8 +289,156 @@ class SaveAndLoadWidget(tk.Frame):
             self.storage_folder_directory.set(directory)
 
 
-def run_test_callback(control_board_port, torque_board_port, pattern_table, velocity_table, position_table):
-    print(pattern_table.get_data())
+class RunTestWidget(tk.Frame):
+    def __init__(self, parent, row, column, pattern_table, velocity_table, position_table):
+        super().__init__(parent)
+
+        # Positioning in parent
+        self.config(padx=5, pady=5)
+        self.grid(row=row, column=column, columnspan=3, sticky='nsew')
+        parent.columnconfigure(column, weight=1)
+
+        # Non widget member variables
+        self.run_test_status = tk.StringVar()
+        self.run_test_status.set('No test running.')
+        self.pattern_table = pattern_table
+        self.velocity_table = velocity_table
+        self.position_table = position_table
+        self.waiting_for_position = False
+
+        # Widget member variables
+        self.run_test_button = tk.Button(master=self,
+                                         height=1,
+                                         text="Run test",
+                                         command=self.run_tests,
+                                         padx=5,
+                                         state='disabled')
+
+        self.run_test_status_indicator_label = tk.Label(master=self,
+                                                        text='Test status:')
+
+        self.run_test_status_label = tk.Label(master=self,
+                                              textvariable=self.run_test_status)
+
+        # Widget positioning
+        self.run_test_button.pack(side=tk.LEFT,
+                                  padx=5)
+        self.run_test_status_indicator_label.pack(side=tk.LEFT,
+                                                  padx=5)
+        self.run_test_status_label.pack(side=tk.LEFT,
+                                        padx=5)
+
+    def run_tests(self):
+        pattern_data = self.pattern_table.get_data()
+        velocity_data = self.velocity_table.get_data()
+        position_data = self.position_table.get_data()
+
+        if velocity_data:
+            if self.velocity_table.should_randomize_data():
+                random.shuffle(velocity_data)
+
+        if position_data:
+            if self.position_table.should_randomize_data():
+                random.shuffle(position_data)
+
+        if pattern_data:
+            if not velocity_data and not position_data:
+                self.launch_simple_test(pattern_data)
+            elif not position_data:
+                self.launch_test_with_velocity_replacement(pattern_data, velocity_data)
+            elif not velocity_data:
+                self.launch_test_with_positions(pattern_data, position_data)
+        else:
+            self.run_test_status.set('Enter a testing pattern.')
+
+    def launch_simple_test(self, pattern_data):
+        if pattern_data:
+            send_command_to_start_running_MCU()
+            self.self_sustained_single_testing(pattern_data, lambda: self.launch_simple_test(pattern_data))
+        else:
+            send_command_to_stop_running_MCU()
+            self.run_test_status.set('No test running.')
+
+    def launch_test_with_velocity_replacement(self, pattern_data, velocity_data):
+        if velocity_data:
+            velocity = velocity_data.pop(0)
+            new_pattern_data = copy.deepcopy(pattern_data)
+            for row in new_pattern_data:
+                if row[1] == "VELOCITY":
+                    row[1] = velocity[0]
+            send_command_to_start_running_MCU()
+            self.self_sustained_single_testing(new_pattern_data,
+                                               lambda: self.launch_test_with_velocity_replacement(pattern_data,
+                                                                                                  velocity_data))
+        else:
+            send_command_to_stop_running_MCU()
+            self.run_test_status.set('No test running.')
+
+    def launch_test_with_positions(self, pattern_data, position_data):
+        if position_data and not self.waiting_for_position:
+            position = position_data.pop(0)[0]
+            send_position_data_to_MCU(position)
+            self.waiting_for_position = True
+            self.run_test_status.set('Moving FB to position')
+            self.after(int(get_time_to_move_to_position(position)),
+                       lambda: self.launch_test_with_positions(pattern_data, position_data))
+        elif self.waiting_for_position:
+            self.waiting_for_position = False
+            send_command_to_start_running_MCU()
+            self.self_sustained_single_testing(copy.deepcopy(pattern_data),
+                                               lambda: self.launch_test_with_positions(pattern_data, position_data))
+        else:
+            send_command_to_stop_running_MCU()
+            self.run_test_status.set('No test running.')
+
+    def self_sustained_single_testing(self, pattern_data, test_ending_callback):
+        if pattern_data:
+            row = pattern_data.pop(0)
+            duration = row[0]
+            velocity = row[1]
+            torque_limit = row[2]
+            send_velocity_to_MCU(velocity)
+            send_torque_to_MCU(torque_limit)
+            self.run_test_status.set(f'Test running:    Duration: {duration} s    Velocity: {velocity} rev/s    '
+                                     f'Torque limit: {torque_limit} Nm')
+            self.after(int(duration * 1000),
+                       lambda: self.self_sustained_single_testing(pattern_data, test_ending_callback))
+        else:
+            # store results here?
+            test_ending_callback()
+
+    def enable_testing(self):
+        self.run_test_button.config(state='normal')
+
+    def disable_testing(self):
+        self.run_test_button.config(state='disabled')
+
+
+def send_velocity_to_MCU(velocity):
+    print("Velocity sent to the MCU:")
+    print(velocity)
+
+
+def send_position_data_to_MCU(position):
+    print("Position sent to the MCU:")
+    print(position)
+
+
+def send_torque_to_MCU(torque):
+    print("Torque sent to the MCU:")
+    print(torque)
+
+
+def send_command_to_start_running_MCU():
+    print("Start running MCU")
+
+
+def send_command_to_stop_running_MCU():
+    print("Stop running MCU")
+
+
+def get_time_to_move_to_position(position):
+    return position * 0.1 * 1000
 
 
 class WindowGUI(tk.Tk):  # This is the base that will help use and add frames easily.
@@ -279,11 +451,14 @@ class WindowGUI(tk.Tk):  # This is the base that will help use and add frames ea
         self.control_board_port = CommWidget(parent=self,
                                              row=0,
                                              column=0,
-                                             main_text='Control board COM port')
-        self.ADC_board_port = CommWidget(parent=self,
-                                         row=1,
-                                         column=0,
-                                         main_text='Torque measurement board COM port')
+                                             main_text='Control board COM port',
+                                             connected_callback=self.control_board_connected_callback,
+                                             disconnected_callback=self.control_board_disconnected_callback)
+
+        self.torque_board_port = CommWidget(parent=self,
+                                            row=1,
+                                            column=0,
+                                            main_text='Torque measurement board COM port')
 
         self.pattern_table = PatternTableWidget(parent=self,
                                                 row=2,
@@ -301,23 +476,23 @@ class WindowGUI(tk.Tk):  # This is the base that will help use and add frames ea
 
         self.save_and_load = SaveAndLoadWidget(parent=self,
                                                row=3,
-                                               column=0)
+                                               column=0,
+                                               pattern_table=self.pattern_table,
+                                               velocity_table=self.velocity_table,
+                                               position_table=self.position_table)
 
-        widgets = (self.control_board_port,
-                   self.ADC_board_port,
-                   self.pattern_table,
-                   self.velocity_table,
-                   self.position_table)
+        self.run_test_widget = RunTestWidget(parent=self,
+                                             row=4,
+                                             column=0,
+                                             pattern_table=self.pattern_table,
+                                             velocity_table=self.velocity_table,
+                                             position_table=self.position_table)
 
-        self.run_test_button = tk.Button(master=self,
-                                         height=1,
-                                         text="Run test",
-                                         command=lambda: run_test_callback(*widgets),
-                                         padx=5)
-        self.run_test_button.grid(row=4,
-                                  column=2,
-                                  padx=5,
-                                  sticky='e')
+    def control_board_connected_callback(self):
+        self.run_test_widget.enable_testing()
+
+    def control_board_disconnected_callback(self):
+        self.run_test_widget.disable_testing()
 
 
 if __name__ == "__main__":
