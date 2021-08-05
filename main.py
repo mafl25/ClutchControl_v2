@@ -329,67 +329,83 @@ class RunTestWidget(tk.Frame):
                                         padx=5)
 
     def run_tests(self):
+        self.disable_testing()
+
         pattern_data = self.pattern_table.get_data()
         velocity_data = self.velocity_table.get_data()
         position_data = self.position_table.get_data()
-
-        if velocity_data:
-            if self.velocity_table.should_randomize_data():
-                random.shuffle(velocity_data)
-
-        if position_data:
-            if self.position_table.should_randomize_data():
-                random.shuffle(position_data)
 
         if pattern_data:
             if not velocity_data and not position_data:
                 self.launch_simple_test(pattern_data)
             elif not position_data:
+                if self.velocity_table.should_randomize_data():
+                    random.shuffle(velocity_data)
                 self.launch_test_with_velocity_replacement(pattern_data, velocity_data)
-            elif not velocity_data:
-                self.launch_test_with_positions(pattern_data, position_data)
+            else:
+                if self.position_table.should_randomize_data():
+                    random.shuffle(position_data)
+                self.launch_test_with_positions(pattern_data, position_data, velocity_data)
         else:
             self.run_test_status.set('Enter a testing pattern.')
 
-    def launch_simple_test(self, pattern_data):
+    def launch_simple_test(self, pattern_data, ending_call_back=None):
         if pattern_data:
             send_command_to_start_running_MCU()
-            self.self_sustained_single_testing(pattern_data, lambda: self.launch_simple_test(pattern_data))
+            self.self_sustained_single_testing(pattern_data, lambda: self.launch_simple_test(pattern_data,
+                                                                                             ending_call_back))
         else:
-            send_command_to_stop_running_MCU()
-            self.run_test_status.set('No test running.')
+            self.run_test_status.set('No tests running.')
+            if ending_call_back:
+                ending_call_back()
+            else:
+                self.enable_testing()
 
-    def launch_test_with_velocity_replacement(self, pattern_data, velocity_data):
+    def launch_test_with_velocity_replacement(self, pattern_data, velocity_data, ending_call_back=None):
         if velocity_data:
             velocity = velocity_data.pop(0)
             new_pattern_data = copy.deepcopy(pattern_data)
             for row in new_pattern_data:
                 if row[1] == "VELOCITY":
                     row[1] = velocity[0]
-            send_command_to_start_running_MCU()
-            self.self_sustained_single_testing(new_pattern_data,
-                                               lambda: self.launch_test_with_velocity_replacement(pattern_data,
-                                                                                                  velocity_data))
+            self.launch_simple_test(new_pattern_data,
+                                    lambda: self.launch_test_with_velocity_replacement(pattern_data,
+                                                                                       velocity_data,
+                                                                                       ending_call_back))
         else:
-            send_command_to_stop_running_MCU()
-            self.run_test_status.set('No test running.')
+            if ending_call_back:
+                ending_call_back()
+            else:
+                self.enable_testing()
 
-    def launch_test_with_positions(self, pattern_data, position_data):
+    def launch_test_with_positions(self, pattern_data, position_data, velocity_data=None):
+
         if position_data and not self.waiting_for_position:
             position = position_data.pop(0)[0]
             send_position_data_to_MCU(position)
             self.waiting_for_position = True
             self.run_test_status.set('Moving FB to position')
             self.after(int(get_time_to_move_to_position(position)),
-                       lambda: self.launch_test_with_positions(pattern_data, position_data))
+                       lambda: self.launch_test_with_positions(pattern_data,
+                                                               position_data,
+                                                               velocity_data))
         elif self.waiting_for_position:
             self.waiting_for_position = False
-            send_command_to_start_running_MCU()
-            self.self_sustained_single_testing(copy.deepcopy(pattern_data),
-                                               lambda: self.launch_test_with_positions(pattern_data, position_data))
+            if not velocity_data:
+                self.launch_simple_test(copy.deepcopy(pattern_data),
+                                        lambda: self.launch_test_with_positions(pattern_data,
+                                                                                position_data,
+                                                                                velocity_data))
+            else:
+                if self.velocity_table.should_randomize_data():
+                    random.shuffle(velocity_data)
+                self.launch_test_with_velocity_replacement(pattern_data,
+                                                           copy.deepcopy(velocity_data),
+                                                           lambda: self.launch_test_with_positions(pattern_data,
+                                                                                                   position_data,
+                                                                                                   velocity_data))
         else:
-            send_command_to_stop_running_MCU()
-            self.run_test_status.set('No test running.')
+            self.enable_testing()
 
     def self_sustained_single_testing(self, pattern_data, test_ending_callback):
         if pattern_data:
@@ -404,8 +420,9 @@ class RunTestWidget(tk.Frame):
             self.after(int(duration * 1000),
                        lambda: self.self_sustained_single_testing(pattern_data, test_ending_callback))
         else:
-            # store results here?
-            test_ending_callback()
+            send_command_to_stop_running_MCU()
+            self.run_test_status.set('Processing and storing data')  # Doesn't have to happen here.
+            self.after(2000, test_ending_callback)
 
     def enable_testing(self):
         self.run_test_button.config(state='normal')
