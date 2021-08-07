@@ -41,11 +41,16 @@ class Packet(bytearray):
 
 
 class TestDevice:
-    def __init__(self, control_port: PortContainer, field_blocker_velocity=1, gear_ratio=1):
+    def __init__(self, control_port: PortContainer, torque_port: PortContainer,
+                 control_time_base: float, torque_time_base: float,
+                 field_blocker_velocity=1, gear_ratio=1):
         self.field_blocker_velocity = field_blocker_velocity
         self.gear_ratio = gear_ratio
         self.codes = CommCodes
         self.control_port = control_port
+        self.torque_port = torque_port
+        self.control_time_base = control_time_base
+        self.torque_time_base = torque_time_base
 
         self.start_packet = Packet(self.codes.VELOCITY_MOTOR_PID_SWITCH, 1)
         self.stop_packet = Packet(self.codes.VELOCITY_MOTOR_PID_SWITCH, 2)
@@ -63,7 +68,7 @@ class TestDevice:
         self.control_port.write(Packet(self.codes.SET_FIELD_BLOCKER_STEPS_TO_MOVE, steps_to_take))
 
     def send_velocity(self, velocity):
-        self.control_port.write(Packet(self.codes.SET_VELOCITY_MOTOR_PID_SETPOINT, velocity))
+        self.control_port.write(Packet(self.codes.SET_VELOCITY_MOTOR_PID_SETPOINT, velocity * self.gear_ratio))
 
     def get_position(self):
         self.control_port.write(self.get_position_packet)
@@ -76,8 +81,16 @@ class TestDevice:
     def get_time_to_move_to_position(self, position):
         current_position = self.get_position()
         steps_to_take = position - current_position
-        print(f'Current position: {current_position}  Steps to take: {steps_to_take} Time to move:' + str(abs(steps_to_take * self.field_blocker_velocity) + 1))
+        print(f'Current position: {current_position}  Steps to take: {steps_to_take} Time to move:' +
+              str(abs(steps_to_take * self.field_blocker_velocity) + 1))
         return abs(steps_to_take * self.field_blocker_velocity) + 1
 
     def flush_data(self):
         self.control_port.flush()
+
+    def get_control_data(self):  # Modify according to the data I should be receiving
+        return (self.control_port.read_float(),
+                self.control_port.read_float())
+
+    def get_torque_data(self):  # Modify according to the data I should be receiving
+        return self.torque_port.read_float()

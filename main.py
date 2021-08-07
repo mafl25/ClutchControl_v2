@@ -27,8 +27,11 @@ class WindowGUI(tk.Tk):  # This is the base that will help use and add frames ea
                                             main_text='Torque measurement board COM port')
 
         self.device = TestDevice(field_blocker_velocity=0.005,
-                                 gear_ratio=1 / 3,
-                                 control_port=self.control_board_port.port)
+                                 gear_ratio=3,
+                                 control_port=self.control_board_port.port,
+                                 torque_port=self.torque_board_port.port,
+                                 control_time_base=0.005,
+                                 torque_time_base=1/50000)
 
         self.pattern_table = PatternTableWidget(parent=self,
                                                 row=2,
@@ -57,7 +60,9 @@ class WindowGUI(tk.Tk):  # This is the base that will help use and add frames ea
                                              device=self.device,
                                              pattern_table=self.pattern_table,
                                              velocity_table=self.velocity_table,
-                                             position_table=self.position_table)
+                                             position_table=self.position_table,
+                                             store_folder=self.save_and_load.storage_folder_directory,
+                                             time_between_tests=5)
 
     def control_board_connected_callback(self):
         self.run_test_widget.enable_testing()

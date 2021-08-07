@@ -5,6 +5,13 @@ from serial import SerialException
 import struct
 
 
+def declare_globals():
+    global FAKE_PORT_NAME
+    FAKE_PORT_NAME = 'COM1 - Fake port for testing only'
+    global USING_FAKE_PORT
+    USING_FAKE_PORT = False
+
+
 class PortContainer:
     def __init__(self, port=None):
         self.port = port
@@ -18,6 +25,9 @@ class PortContainer:
     def write(self, *args, **kwargs):
         if self.port:
             self.port.write(*args, **kwargs)
+        else:
+            if USING_FAKE_PORT:
+                print(args)
 
     def read(self, *args, **kwargs):
         if self.port:
@@ -38,12 +48,24 @@ class PortContainer:
             self.port.reset_input_buffer(*args, **kwargs)
 
     def read_int32(self):
-        data = self.read(size=4)
-        return struct.unpack('i', data)[0]
+        if self.port:
+            data = self.read(size=4)
+            return struct.unpack('i', data)[0]
+        else:
+            if USING_FAKE_PORT:
+                return 100
+            else:
+                return None
 
     def read_float(self):
-        data = self.read(size=4)
-        return struct.unpack('f', data)[0]
+        if self.port:
+            data = self.read(size=4)
+            return struct.unpack('f', data)[0]
+        else:
+            if USING_FAKE_PORT:
+                return 3.14
+            else:
+                return None
 
 
 class CommWidget(tk.Frame):
@@ -57,6 +79,8 @@ class CommWidget(tk.Frame):
                  disconnected_callback=None,
                  baud_rate=921600):
         super().__init__(parent)
+
+        declare_globals()
 
         # Positioning in parent
         self.config(padx=5, pady=5)
@@ -81,6 +105,8 @@ class CommWidget(tk.Frame):
 
         # Widget member variables
         port_list = ports.comports()
+        if not port_list:
+            port_list = [FAKE_PORT_NAME]
         self.drop_down_menu = tk.OptionMenu(self,
                                             self.menu_main_text,
                                             *port_list)
@@ -109,7 +135,7 @@ class CommWidget(tk.Frame):
     def update_port_list(self):
         self.drop_down_menu['menu'].delete(0, 'end')
         port_list = ports.comports()
-        if len(port_list) == 0:
+        if not port_list:
             self.status_text.set("No COM ports detected")
         else:
             for port in port_list:
@@ -124,7 +150,11 @@ class CommWidget(tk.Frame):
             if self.has_a_port_been_selected() is True:
                 port_name = self.menu_main_text.get().partition(' ')[0]
                 try:
-                    self.port.set(Serial(port=port_name, baudrate=self.baud_rate, timeout=0.1))
+                    if self.menu_main_text.get() != FAKE_PORT_NAME:
+                        self.port.set(Serial(port=port_name, baudrate=self.baud_rate, timeout=0.1))
+                    else:
+                        global USING_FAKE_PORT
+                        USING_FAKE_PORT = True
                     self.is_connected = True
                     self.status_text.set('Connected')
                     if self.connected_callback:

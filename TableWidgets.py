@@ -109,16 +109,17 @@ class ParameterTableWidget(tk.Frame):
     def get_data(self):
         original_data = copy.deepcopy(self.table.get_sheet_data())
         sanitized_data = []
-        try:
-            for row in original_data:
-                new_row = []
-                for index, element in enumerate(row):
+        for row in original_data:
+            new_row = []
+            for index, element in enumerate(row):
+                try:
                     new_row.append(float(element))
-                sanitized_data.append(new_row)
-            return sanitized_data
-        except ValueError:
-            print('Input error in ' + self.main_label.cget("text"))
-            return None
+                    sanitized_data.append(new_row)
+                except ValueError:
+                    print('Input error in ' + self.main_label.cget("text"))
+        print('Sanitize data')
+        print(sanitized_data)
+        return sanitized_data
 
     def set_data(self, data):
         self.table.set_sheet_data(copy.deepcopy(data))
