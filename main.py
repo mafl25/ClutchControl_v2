@@ -24,14 +24,15 @@ class WindowGUI(tk.Tk):  # This is the base that will help use and add frames ea
         self.torque_board_port = CommWidget(parent=self,
                                             row=1,
                                             column=0,
-                                            main_text='Torque measurement board COM port')
+                                            main_text='Torque measurement board COM port',
+                                            baud_rate=1250000)
 
         self.device = TestDevice(field_blocker_velocity=0.005,
-                                 gear_ratio=3,
+                                 gear_ratio=35.0/15.0,
                                  control_port=self.control_board_port.port,
                                  torque_port=self.torque_board_port.port,
                                  control_time_base=0.005,
-                                 torque_time_base=1/50000)
+                                 torque_time_base=1.0/50000.0)
 
         self.pattern_table = PatternTableWidget(parent=self,
                                                 row=2,

@@ -1,3 +1,4 @@
+import time
 from enum import Enum
 from CommWidget import PortContainer
 import struct
@@ -43,7 +44,7 @@ class Packet(bytearray):
 class TestDevice:
     def __init__(self, control_port: PortContainer, torque_port: PortContainer,
                  control_time_base: float, torque_time_base: float,
-                 field_blocker_velocity=1, gear_ratio=1):
+                 field_blocker_velocity=1, gear_ratio=1.0):
         self.field_blocker_velocity = field_blocker_velocity
         self.gear_ratio = gear_ratio
         self.codes = CommCodes
@@ -56,21 +57,31 @@ class TestDevice:
         self.stop_packet = Packet(self.codes.VELOCITY_MOTOR_PID_SWITCH, 2)
         self.get_position_packet = Packet(self.codes.GET_FIELD_BLOCKER_POSITION, 0)
 
-    def start(self):
+    def start(self, total_time):
+        if self.torque_port:
+            self.torque_port.write(bytes([0]))
+            time.sleep(0.02)
+            bytes_time = struct.pack("H", int(total_time))
+            packet = bytearray([0x0B, 0x0B, bytes_time[0], bytes_time[1]])
+            self.torque_port.write(packet)
+
         self.control_port.write(self.start_packet)
 
     def stop(self):
         self.control_port.write(self.stop_packet)
 
-    def send_position(self, position):
-        current_position = self.get_position()
+    def set_field_blocker_position(self, position):
+        current_position = self.get_field_blocker_position()
         steps_to_take = int(position - current_position)
         self.control_port.write(Packet(self.codes.SET_FIELD_BLOCKER_STEPS_TO_MOVE, steps_to_take))
+
+    def reset_field_blocker_position(self):
+        self.control_port.write(Packet(self.codes.SET_FIELD_BLOCKER_STEPS_TO_MOVE, -1000000))
 
     def send_velocity(self, velocity):
         self.control_port.write(Packet(self.codes.SET_VELOCITY_MOTOR_PID_SETPOINT, velocity * self.gear_ratio))
 
-    def get_position(self):
+    def get_field_blocker_position(self):
         self.control_port.write(self.get_position_packet)
         return self.control_port.read_int32()
 
@@ -79,7 +90,7 @@ class TestDevice:
         print(torque_limit)
 
     def get_time_to_move_to_position(self, position):
-        current_position = self.get_position()
+        current_position = self.get_field_blocker_position()
         steps_to_take = position - current_position
         print(f'Current position: {current_position}  Steps to take: {steps_to_take} Time to move:' +
               str(abs(steps_to_take * self.field_blocker_velocity) + 1))
@@ -87,10 +98,22 @@ class TestDevice:
 
     def flush_data(self):
         self.control_port.flush()
+        self.torque_port.flush()
 
     def get_control_data(self):  # Modify according to the data I should be receiving
-        return (self.control_port.read_float(),
-                self.control_port.read_float())
+        voltage = self.control_port.read_float()
+        velocity = self.control_port.read_float()
+
+        if voltage is not None and velocity is not None:
+            return voltage, velocity / self.gear_ratio
+        else:
+            return None
 
     def get_torque_data(self):  # Modify according to the data I should be receiving
-        return self.torque_port.read_float()
+        ADC_value = self.torque_port.read_uint16()
+        if ADC_value is not None:
+            current = 0.004417857*ADC_value+0.031330338
+            torque = (current-10.0)*5.0/8.0
+            return torque
+        else:
+            return ADC_value
